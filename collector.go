@@ -21,6 +21,8 @@ import (
 	probing "github.com/prometheus-community/pro-bing"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+
+	"github.com/SuperQ/smokeping_prober/remote"
 )
 
 const (
@@ -96,12 +98,13 @@ func initMetrics(labelNames []string, buckets []float64, factor float64) *promet
 // SmokepingCollector collects metrics from the probes and their pingers.
 type SmokepingCollector struct {
 	probes *[]probe
+	remote []*remote.Target
 
 	requestsSent *prometheus.Desc
 	labelNames   []string
 }
 
-func NewSmokepingCollector(probes []probe, labelNames []string, pingResponseSeconds prometheus.HistogramVec) *SmokepingCollector {
+func NewSmokepingCollector(probes []probe, remoteTargets []*remote.Target, labelNames []string, pingResponseSeconds prometheus.HistogramVec) *SmokepingCollector {
 	instance := SmokepingCollector{
 		requestsSent: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "", "requests_total"),
@@ -110,6 +113,7 @@ func NewSmokepingCollector(probes []probe, labelNames []string, pingResponseSeco
 			nil,
 		),
 		labelNames: labelNames,
+		remote:     remoteTargets,
 	}
 
 	instance.updateProbes(probes, pingResponseSeconds)
@@ -117,31 +121,65 @@ func NewSmokepingCollector(probes []probe, labelNames []string, pingResponseSeco
 	return &instance
 }
 
-func (s *SmokepingCollector) buildLabelValues(pr *probe, overrideIP string) []string {
-	vals := make([]string, 0, len(s.labelNames))
-	base := map[string]string{
-		"ip":     pr.pinger.IPAddr().String(),
-		"host":   pr.pinger.Addr(),
-		"source": pr.pinger.Source,
-		"tos":    strconv.Itoa(int(pr.pinger.TrafficClass())),
-	}
-	labels := pr.labels
-	for _, k := range s.labelNames {
+// labelValues orders base and custom label values to match labelNames.
+// A name found in neither map gets an empty value.
+func labelValues(labelNames []string, base, custom map[string]string) []string {
+	vals := make([]string, 0, len(labelNames))
+	for _, k := range labelNames {
 		if v, ok := base[k]; ok {
 			vals = append(vals, v)
 			continue
 		}
-		vals = append(vals, labels[k])
-	}
-	if overrideIP != "" {
-		for i, k := range s.labelNames {
-			if k == "ip" {
-				vals[i] = overrideIP
-				break
-			}
-		}
+		vals = append(vals, custom[k])
 	}
 	return vals
+}
+
+func (s *SmokepingCollector) buildLabelValues(pr *probe, overrideIP string) []string {
+	ip := pr.pinger.IPAddr().String()
+	if overrideIP != "" {
+		ip = overrideIP
+	}
+	return labelValues(s.labelNames, map[string]string{
+		"ip":     ip,
+		"host":   pr.pinger.Addr(),
+		"source": pr.pinger.Source,
+		"tos":    strconv.Itoa(int(pr.pinger.TrafficClass())),
+		"link":   "",
+	}, pr.labels)
+}
+
+func remoteLabelValues(labelNames []string, t *remote.Target) []string {
+	return labelValues(labelNames, map[string]string{
+		"ip":     t.Job.Target,
+		"host":   t.Host,
+		"source": t.Job.Source,
+		"tos":    strconv.Itoa(int(t.Job.ToS)),
+		"link":   t.Link,
+	}, t.Labels)
+}
+
+// remoteRecorder writes remote results into the vectors that were current when
+// it was created, so a scheduler that is still stopping during a reload never
+// writes to vectors with a different label set.
+type remoteRecorder struct {
+	labelNames []string
+	hist       *prometheus.HistogramVec
+	ttl        *prometheus.GaugeVec
+}
+
+func newRemoteRecorder(labelNames []string, hist *prometheus.HistogramVec) *remoteRecorder {
+	return &remoteRecorder{labelNames: labelNames, hist: hist, ttl: pingResponseTTL}
+}
+
+func (r *remoteRecorder) Record(t *remote.Target, res remote.Result) {
+	vals := remoteLabelValues(r.labelNames, t)
+	for _, rep := range res.Replies {
+		r.hist.WithLabelValues(vals...).Observe(rep.RTT.Seconds())
+	}
+	if n := len(res.Replies); n > 0 {
+		r.ttl.WithLabelValues(vals...).Set(float64(res.Replies[n-1].TTL))
+	}
 }
 
 func (s *SmokepingCollector) updateProbes(probes []probe, pingResponseSeconds prometheus.HistogramVec) {
@@ -197,6 +235,12 @@ func (s *SmokepingCollector) updateProbes(probes []probe, pingResponseSeconds pr
 				"bytes_received", pkt.Nbytes, "icmp_seq", pkt.Seq, "rtt", pkt.Rtt, "ttl", pkt.TTL, "error", err)
 		}
 	}
+	for _, t := range s.remote {
+		// Init remote series to 0s.
+		vals := remoteLabelValues(s.labelNames, t)
+		pingResponseSeconds.WithLabelValues(vals...)
+		pingResponseTTL.WithLabelValues(vals...)
+	}
 	s.probes = &probes
 }
 
@@ -213,6 +257,14 @@ func (s *SmokepingCollector) Collect(ch chan<- prometheus.Metric) {
 			prometheus.CounterValue,
 			float64(stats.PacketsSent),
 			vals...,
+		)
+	}
+	for _, t := range s.remote {
+		ch <- prometheus.MustNewConstMetric(
+			s.requestsSent,
+			prometheus.CounterValue,
+			float64(t.Sent()),
+			remoteLabelValues(s.labelNames, t)...,
 		)
 	}
 }

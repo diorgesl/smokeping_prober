@@ -42,6 +42,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/SuperQ/smokeping_prober/config"
+	"github.com/SuperQ/smokeping_prober/remote"
 )
 
 var (
@@ -93,31 +94,48 @@ type probe struct {
 }
 
 type smokePingers struct {
-	started     []probe
-	prepared    []probe
-	g           *errgroup.Group
-	maxInterval time.Duration
+	started        []probe
+	prepared       []probe
+	startedRemote  []*remote.Scheduler
+	preparedRemote []*remote.Scheduler
+	g              *errgroup.Group
+	maxInterval    time.Duration
 }
 
 func (s *smokePingers) sizeOfPrepared() int {
-	if s.prepared != nil {
-		return len(s.prepared)
+	n := len(s.prepared)
+	for _, sch := range s.preparedRemote {
+		n += len(sch.Targets())
 	}
-	return 0
+	return n
+}
+
+func (s *smokePingers) remoteTargets() []*remote.Target {
+	var targets []*remote.Target
+	for _, sch := range s.startedRemote {
+		targets = append(targets, sch.Targets()...)
+	}
+	return targets
 }
 
 func (s *smokePingers) start() {
 	if s.sizeOfPrepared() == 0 {
 		return
 	}
-	if s.g != nil {
-		err := s.stop()
-		if err != nil {
-			logger.Warn("At least one previous pinger failed to run", "err", err)
-		}
+	if err := s.stop(); err != nil {
+		logger.Warn("At least one previous pinger failed to run", "err", err)
+	}
+	s.startedRemote = s.preparedRemote
+	s.preparedRemote = nil
+	for _, sch := range s.startedRemote {
+		sch.Start()
 	}
 	s.g = new(errgroup.Group)
 	s.started = s.prepared
+	s.prepared = nil
+	if len(s.started) == 0 {
+		return
+	}
 	splay := time.Duration(s.maxInterval.Nanoseconds() / int64(len(s.started)))
 	for _, pr := range s.started {
 		pinger := pr.pinger
@@ -139,10 +157,13 @@ func (s *smokePingers) start() {
 			})
 		time.Sleep(splay)
 	}
-	s.prepared = nil
 }
 
 func (s *smokePingers) stop() error {
+	for _, sch := range s.startedRemote {
+		sch.Stop()
+	}
+	s.startedRemote = nil
 	if s.g == nil {
 		return nil
 	}
@@ -158,7 +179,7 @@ func (s *smokePingers) stop() error {
 	return nil
 }
 
-func (s *smokePingers) prepare(hosts *[]string, interval *time.Duration, privileged *bool, sizeBytes *int, tosField *uint8) error {
+func (s *smokePingers) prepare(hosts *[]string, interval *time.Duration, privileged *bool, sizeBytes *int, tosField *uint8, rec remote.Recorder) error {
 	probes := make([]probe, 0, len(*hosts))
 	var pinger *probing.Pinger
 	var host string
@@ -186,12 +207,22 @@ func (s *smokePingers) prepare(hosts *[]string, interval *time.Duration, privile
 	}
 
 	maxInterval := *interval
+	remoteTargets := map[string][]*remote.Target{}
 	sc.Lock()
 	defer sc.Unlock()
 	for _, targetGroup := range sc.C.Targets {
 		packetSize := targetGroup.Size
 		if packetSize < 24 || packetSize > 65535 {
 			return fmt.Errorf("packet size must be in the range 24-65535, but found '%d' bytes", packetSize)
+		}
+		if targetGroup.Router != "" {
+			router, _ := sc.C.Router(targetGroup.Router)
+			targets, err := remote.BuildTargets(targetGroup, router, remote.Resolve, logger)
+			if err != nil {
+				return fmt.Errorf("router %q: %w", router.Name, err)
+			}
+			remoteTargets[router.Name] = append(remoteTargets[router.Name], targets...)
+			continue
 		}
 		if targetGroup.Interval > maxInterval {
 			maxInterval = targetGroup.Interval
@@ -218,7 +249,21 @@ func (s *smokePingers) prepare(hosts *[]string, interval *time.Duration, privile
 			})
 		}
 	}
+	schedulers := make([]*remote.Scheduler, 0, len(remoteTargets))
+	for _, router := range sc.C.Routers {
+		targets := remoteTargets[router.Name]
+		if len(targets) == 0 {
+			continue
+		}
+		dial, err := remote.NewSSHDialer(router, logger)
+		if err != nil {
+			return fmt.Errorf("router %q: %w", router.Name, err)
+		}
+		logger.Info("Prepared remote prober", "router", router.Name, "address", router.Address, "sessions", router.Sessions, "targets", len(targets))
+		schedulers = append(schedulers, remote.NewScheduler(router.Name, router.Sessions, dial, targets, rec, logger))
+	}
 	s.prepared = probes
+	s.preparedRemote = schedulers
 	s.maxInterval = maxInterval
 	return nil
 }
@@ -241,13 +286,13 @@ func init() {
 }
 
 func buildLabelNamesFromConfig() []string {
-	base := []string{"ip", "host", "source", "tos"}
+	base := []string{"ip", "host", "source", "tos", "link"}
 	m := map[string]struct{}{}
 	sc.RLock()
 	defer sc.RUnlock()
 	for _, tg := range sc.C.Targets {
 		for k := range tg.Labels {
-			if k == "ip" || k == "host" || k == "source" || k == "tos" {
+			if slices.Contains(base, k) {
 				continue
 			}
 			m[k] = struct{}{}
@@ -314,7 +359,7 @@ func main() {
 	pingResponseSeconds = initMetrics(labelNames, bucketlist, *factor)
 	prometheus.MustRegister(pingResponseSeconds)
 
-	err = smokePingers.prepare(hosts, interval, privileged, sizeBytes, tosField)
+	err = smokePingers.prepare(hosts, interval, privileged, sizeBytes, tosField, newRemoteRecorder(labelNames, pingResponseSeconds))
 	if err != nil {
 		logger.Error("Unable to create ping", "err", err)
 		os.Exit(1)
@@ -326,7 +371,7 @@ func main() {
 	}
 
 	smokePingers.start()
-	smokepingCollector = NewSmokepingCollector(smokePingers.started, labelNames, *pingResponseSeconds)
+	smokepingCollector = NewSmokepingCollector(smokePingers.started, smokePingers.remoteTargets(), labelNames, *pingResponseSeconds)
 	prometheus.MustRegister(smokepingCollector)
 
 	hup := make(chan os.Signal, 1)
@@ -360,7 +405,7 @@ func main() {
 			pingResponseSeconds = initMetrics(newLabelNames, bucketlist, *factor)
 			prometheus.MustRegister(pingResponseSeconds)
 
-			err = smokePingers.prepare(hosts, interval, privileged, sizeBytes, tosField)
+			err = smokePingers.prepare(hosts, interval, privileged, sizeBytes, tosField, newRemoteRecorder(newLabelNames, pingResponseSeconds))
 			if err != nil {
 				logger.Error("Unable to create ping from config", "err", err)
 				errCallback(err)
@@ -376,7 +421,7 @@ func main() {
 
 			// Recreate collector to reflect any label set changes
 			prometheus.Unregister(smokepingCollector)
-			smokepingCollector = NewSmokepingCollector(smokePingers.started, newLabelNames, *pingResponseSeconds)
+			smokepingCollector = NewSmokepingCollector(smokePingers.started, smokePingers.remoteTargets(), newLabelNames, *pingResponseSeconds)
 			prometheus.MustRegister(smokepingCollector)
 
 			logger.Info("Reloaded config file")
