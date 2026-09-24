@@ -55,9 +55,10 @@ var ErrParse = errors.New("unexpected ping output")
 
 var (
 	// IPv4 prints "ttl=", IPv6 prints "hop limit=" on the line after "Reply from".
-	replyRe   = regexp.MustCompile(`Sequence=(\d+)\s+(?:ttl|hop limit)=(\d+)\s+time\s*=\s*(\d+)\s*ms`)
-	sentRe    = regexp.MustCompile(`(\d+)\s+packet\(s\)\s+transmitted`)
-	timeoutRe = regexp.MustCompile(`Request time out`)
+	replyRe    = regexp.MustCompile(`Sequence=(\d+)\s+(?:ttl|hop limit)=(\d+)\s+time\s*=\s*(\d+)\s*ms`)
+	sentRe     = regexp.MustCompile(`(\d+)\s+packet\(s\)\s+transmitted`)
+	receivedRe = regexp.MustCompile(`(\d+)\s+packet\(s\)\s+received`)
+	timeoutRe  = regexp.MustCompile(`Request time out`)
 )
 
 // BuildCommand returns the VRP ping command for j.
@@ -91,6 +92,15 @@ func ParseOutput(out string) (Result, error) {
 		res.Replies = append(res.Replies, Reply{Seq: seq, RTT: time.Duration(rtt) * time.Millisecond, TTL: ttl})
 	}
 	res.Timeouts = len(timeoutRe.FindAllStringIndex(out, -1))
+
+	rm := receivedRe.FindStringSubmatch(out)
+	if rm == nil {
+		return Result{}, fmt.Errorf("%w: no received count: %s", ErrParse, firstLine(out))
+	}
+	received, _ := strconv.Atoi(rm[1])
+	if received != len(res.Replies) {
+		return Result{}, fmt.Errorf("%w: router reported %d replies, parsed %d", ErrParse, received, len(res.Replies))
+	}
 	return res, nil
 }
 

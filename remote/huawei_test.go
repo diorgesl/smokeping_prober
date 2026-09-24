@@ -125,6 +125,29 @@ func TestParseOutputRouterError(t *testing.T) {
 	}
 }
 
+// TestParseOutputReplyCountMismatch covers replies that fail to match replyRe
+// (a router format variation) while Sent keeps counting: without checking the
+// "packet(s) received" line against len(Replies), this would silently read as
+// near-100% loss instead of surfacing a parse error.
+func TestParseOutputReplyCountMismatch(t *testing.T) {
+	// The second reply's "time=24 ms" becomes "time<1 ms", so replyRe no
+	// longer matches that line: only 2 of the 3 announced replies parse.
+	garbled := strings.Replace(ipv4OK,
+		"    Reply from 1.1.1.1: bytes=56 Sequence=2 ttl=59 time=24 ms",
+		"    Reply from 1.1.1.1: bytes=56 Sequence=2 ttl=59 time<1 ms",
+		1)
+	_, err := ParseOutput(garbled)
+	if !errors.Is(err, ErrParse) {
+		t.Fatalf("error = %v, want ErrParse", err)
+	}
+
+	noReceivedLine := strings.Replace(ipv4OK, "    3 packet(s) received\n", "", 1)
+	_, err = ParseOutput(noReceivedLine)
+	if !errors.Is(err, ErrParse) {
+		t.Fatalf("error (no received line) = %v, want ErrParse", err)
+	}
+}
+
 func TestBuildCommand(t *testing.T) {
 	base := Job{Count: 10, PacketInterval: ms(50), Timeout: ms(500), Size: 56}
 
