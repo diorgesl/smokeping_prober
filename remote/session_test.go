@@ -129,8 +129,9 @@ func TestDialRejectsUnknownHostKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = Dial(context.Background(), SSHConfig{Address: f.addr, Username: "u", Password: "secret", KnownHostsFile: path, DialTimeout: 2 * time.Second})
-	if err == nil {
-		t.Fatal("expected host key error")
+	var keyErr *knownhosts.KeyError
+	if !errors.As(err, &keyErr) {
+		t.Fatalf("error = %v, want a *knownhosts.KeyError", err)
 	}
 }
 
@@ -228,6 +229,53 @@ func TestRunIgnoresStrayPrompt(t *testing.T) {
 	}
 	if wantB, _ := ParseOutput(ipv6OK); !reflect.DeepEqual(gotB, wantB) {
 		t.Errorf("cmdB: got %+v, want %+v", gotB, wantB)
+	}
+}
+
+// TestRunWithWrappedEcho covers a router that wraps and redraws a long
+// command line instead of echoing it on one line: anchoring on the whole
+// command (as opposed to just its last token, the destination) would never
+// match a wrapped echo split across "\r\n". wrapEchoAt is chosen so the
+// command's final token (the IPv6 destination) is not itself split across a
+// wrap boundary; a split destination token would still work as long as the
+// same text later appears intact in the "PING <dst>" response header, which
+// Run's anchor search would then match instead, but that fallback is not
+// what this test exercises.
+func TestRunWithWrappedEcho(t *testing.T) {
+	job := testJob
+	job.Target = "2001:4860:4860::8888"
+	job.Source = "2804:194c:1000::155:f0ca:a"
+	job.IPv6 = true
+	cmd := BuildCommand(job)
+
+	const wrapAt = 50
+	start := strings.LastIndex(cmd, job.Target)
+	if start == -1 {
+		t.Fatalf("destination %q not found in command %q", job.Target, cmd)
+	}
+	if start/wrapAt != (start+len(job.Target)-1)/wrapAt {
+		t.Fatalf("wrapAt=%d splits the destination token in %q; pick a different wrap width", wrapAt, cmd)
+	}
+
+	f := &fakeVRP{password: "secret", wrapEchoAt: wrapAt, responses: map[string]string{cmd: ipv6OK}}
+	startFakeVRP(t, f)
+	s, err := dialFake(t, f)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer s.Close()
+
+	out, err := s.Run(cmd, 2*time.Second)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got, err := ParseOutput(out)
+	if err != nil {
+		t.Fatalf("ParseOutput: %v", err)
+	}
+	want, _ := ParseOutput(ipv6OK)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v, want %+v", got, want)
 	}
 }
 

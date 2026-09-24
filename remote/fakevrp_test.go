@@ -48,6 +48,10 @@ type fakeVRP struct {
 	// stallShell makes the server never reply to a "shell" channel request,
 	// simulating a router that accepted the connection but never answers.
 	stallShell bool
+	// wrapEchoAt, when > 0, breaks the command echo into lines of this many
+	// bytes (joined by "\r\n"), simulating a terminal that wraps and redraws
+	// a long command line instead of echoing it back on one line.
+	wrapEchoAt int
 
 	addr    string
 	hostKey ssh.PublicKey
@@ -185,7 +189,7 @@ func (f *fakeVRP) shell(ch ssh.Channel) {
 			f.mu.Lock()
 			f.cmds = append(f.cmds, cmd)
 			f.mu.Unlock()
-			io.WriteString(ch, cmd+"\r\n") // terminal echo
+			io.WriteString(ch, wrapEcho(cmd, f.wrapEchoAt)+"\r\n") // terminal echo
 			if f.hang[cmd] {
 				hanging = true
 				continue
@@ -204,6 +208,24 @@ func (f *fakeVRP) shell(ch ssh.Channel) {
 			}
 		}
 	}
+}
+
+// wrapEcho breaks s into chunks of at bytes joined by "\r\n", simulating a
+// terminal that wraps a long line and redraws it across several lines. at <=
+// 0 returns s unchanged.
+func wrapEcho(s string, at int) string {
+	if at <= 0 {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i += at {
+		end := min(i+at, len(s))
+		b.WriteString(s[i:end])
+		if end < len(s) {
+			b.WriteString("\r\n")
+		}
+	}
+	return b.String()
 }
 
 func mustEd25519(t *testing.T) ed25519.PrivateKey {

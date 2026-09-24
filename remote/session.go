@@ -45,6 +45,10 @@ const (
 // promptRe matches a VRP prompt at the end of the output: <name>, [name] or [~name].
 var promptRe = regexp.MustCompile(`([<\[][~*]?[^\s<>\[\]]+[>\]])\s*$`)
 
+// ansiRe matches a CSI (ANSI) escape sequence, e.g. cursor movement a
+// terminal emits while redrawing a wrapped line.
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
+
 // SSHConfig describes how to reach a router.
 type SSHConfig struct {
 	Address             string
@@ -205,7 +209,8 @@ func (s *Session) readLoop(r io.Reader) {
 }
 
 func (s *Session) text() string {
-	return strings.ReplaceAll(string(s.buf), "\r", "")
+	t := ansiRe.ReplaceAllString(string(s.buf), "")
+	return strings.ReplaceAll(t, "\r", "")
 }
 
 func (s *Session) learnPrompt() error {
@@ -246,10 +251,17 @@ func (s *Session) Run(cmd string, timeout time.Duration) (string, error) {
 		s.Close()
 		return "", fmt.Errorf("%w: write: %v", ErrClosed, err)
 	}
-	out, err := s.waitPrompt(timeout, cmd)
+	// Anchor on the command's last token (for ping, the destination) rather
+	// than the whole line: a router that wraps and redraws a long command
+	// while echoing it still prints this token intact, whereas the full
+	// line may be split across an inserted "\r\n". If the token itself gets
+	// split by the wrap, the anchor search below still finds it further on,
+	// in the unmangled "PING <dst>" response header.
+	anchor := lastToken(cmd)
+	out, err := s.waitPrompt(timeout, anchor)
 	switch {
 	case err == nil:
-		return cleanOutput(out, cmd), nil
+		return cleanOutput(out, anchor), nil
 	case errors.Is(err, ErrTimeout):
 		_, _ = io.WriteString(s.stdin, "\x03")
 		if _, err := s.waitPrompt(ctrlCTimeout, ""); err != nil {
@@ -313,12 +325,22 @@ func (s *Session) waitPrompt(timeout time.Duration, anchor string) (string, erro
 	}
 }
 
-func cleanOutput(out, cmd string) string {
+func cleanOutput(out, anchor string) string {
 	lines := strings.Split(out, "\n")
-	if len(lines) > 0 && strings.Contains(lines[0], cmd) {
+	if len(lines) > 0 && strings.Contains(lines[0], anchor) {
 		lines = lines[1:]
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+// lastToken returns the last whitespace-separated field of cmd, or cmd
+// itself when it has none.
+func lastToken(cmd string) string {
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return cmd
+	}
+	return fields[len(fields)-1]
 }
 
 // Close ends the shell and the SSH connection.
