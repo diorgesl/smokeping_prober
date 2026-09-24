@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -40,6 +41,13 @@ type fakeVRP struct {
 	responses   map[string]string // command -> output
 	hang        map[string]bool   // commands that only end with Ctrl-C
 	ignoreCtrlC bool
+	// extraPromptOnCtrlC makes the Ctrl-C reply to a hanging command send the
+	// prompt twice, the second one 50ms later, to simulate a stray prompt
+	// racing the next Run call.
+	extraPromptOnCtrlC bool
+	// stallShell makes the server never reply to a "shell" channel request,
+	// simulating a router that accepted the connection but never answers.
+	stallShell bool
 
 	addr    string
 	hostKey ssh.PublicKey
@@ -123,6 +131,11 @@ func (f *fakeVRP) serve(conn net.Conn, cfg *ssh.ServerConfig) {
 				case "pty-req":
 					r.Reply(true, nil)
 				case "shell":
+					if f.stallShell {
+						// Never reply: the client's Shell() call blocks
+						// forever unless the connection is closed.
+						continue
+					}
 					r.Reply(true, nil)
 					go f.shell(ch)
 				default:
@@ -152,6 +165,12 @@ func (f *fakeVRP) shell(ch ssh.Channel) {
 			if hanging && !f.ignoreCtrlC {
 				hanging = false
 				io.WriteString(ch, "\r\n"+fakePrompt)
+				if f.extraPromptOnCtrlC {
+					go func() {
+						time.Sleep(50 * time.Millisecond)
+						io.WriteString(ch, "\r\n"+fakePrompt)
+					}()
+				}
 			}
 		case c == '\r' || c == '\n':
 			if hanging {

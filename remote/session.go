@@ -86,7 +86,12 @@ func Dial(ctx context.Context, cfg SSHConfig) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", cfg.Address, err)
 	}
-	_ = conn.SetDeadline(time.Now().Add(timeout))
+	// ctx only bounds Dial itself: closing conn unblocks a handshake or a
+	// stalled channel/pty/shell request that ssh's blocking calls cannot
+	// otherwise cancel. stop is called once Dial has a working Session, so
+	// a later cancellation of ctx does not affect the session's lifetime.
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	_ = conn.SetDeadline(time.Now().Add(timeout + loginTimeout))
 	c, chans, reqs, err := ssh.NewClientConn(conn, cfg.Address, &ssh.ClientConfig{
 		User:            cfg.Username,
 		Auth:            auth,
@@ -97,13 +102,14 @@ func Dial(ctx context.Context, cfg SSHConfig) (*Session, error) {
 		conn.Close()
 		return nil, fmt.Errorf("ssh handshake with %s: %w", cfg.Address, err)
 	}
-	_ = conn.SetDeadline(time.Time{})
 	client := ssh.NewClient(c, chans, reqs)
 	s, err := startShell(client)
 	if err != nil {
 		client.Close()
 		return nil, err
 	}
+	_ = conn.SetDeadline(time.Time{})
+	stop()
 	return s, nil
 }
 
@@ -204,9 +210,16 @@ func (s *Session) learnPrompt() error {
 	timer := time.NewTimer(loginTimeout)
 	defer timer.Stop()
 	for {
-		if m := promptRe.FindStringSubmatch(s.text()); m != nil {
+		text := s.text()
+		// VRP interactive questions ("Change now? [Y/N]:") do not end in a
+		// prompt shape, but promptRe requires a trailing '>' or ']', so they
+		// would otherwise be missed here and time out instead of erroring.
+		if trimmed := strings.TrimRight(text, " \t\r\n:"); strings.HasSuffix(strings.ToUpper(trimmed), "[Y/N]") {
+			return fmt.Errorf("router asked an interactive question after login: %q", strings.TrimSpace(text))
+		}
+		if m := promptRe.FindStringSubmatch(text); m != nil {
 			if strings.Contains(strings.ToUpper(m[1]), "Y/N") {
-				return fmt.Errorf("router asked an interactive question after login: %q", strings.TrimSpace(s.text()))
+				return fmt.Errorf("router asked an interactive question after login: %q", strings.TrimSpace(text))
 			}
 			s.prompt = m[1]
 			s.buf = s.buf[:0]
@@ -231,13 +244,13 @@ func (s *Session) Run(cmd string, timeout time.Duration) (string, error) {
 		s.Close()
 		return "", fmt.Errorf("%w: write: %v", ErrClosed, err)
 	}
-	out, err := s.waitPrompt(timeout)
+	out, err := s.waitPrompt(timeout, cmd)
 	switch {
 	case err == nil:
 		return cleanOutput(out, cmd), nil
 	case errors.Is(err, ErrTimeout):
 		_, _ = io.WriteString(s.stdin, "\x03")
-		if _, err := s.waitPrompt(ctrlCTimeout); err != nil {
+		if _, err := s.waitPrompt(ctrlCTimeout, ""); err != nil {
 			s.Close()
 			return "", fmt.Errorf("%w: %w: no prompt after Ctrl-C", ErrTimeout, ErrClosed)
 		}
@@ -263,14 +276,28 @@ func (s *Session) drain() {
 	}
 }
 
-func (s *Session) waitPrompt(timeout time.Duration) (string, error) {
+// waitPrompt reads until the prompt reappears. When anchor is non-empty, a
+// prompt is only recognized once anchor (the command's own echo) has shown
+// up in the buffer, and only the text from that point on is considered: this
+// keeps a stray prompt left over from an earlier command (e.g. a second
+// Ctrl-C reply racing the next Run) from being mistaken for the real one.
+func (s *Session) waitPrompt(timeout time.Duration, anchor string) (string, error) {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	for {
-		trimmed := strings.TrimRight(s.text(), " \n")
-		if strings.HasSuffix(trimmed, s.prompt) {
-			s.buf = s.buf[:0]
-			return strings.TrimSuffix(trimmed, s.prompt), nil
+		text := s.text()
+		search, ready := text, anchor == ""
+		if anchor != "" {
+			if idx := strings.Index(text, anchor); idx != -1 {
+				search, ready = text[idx:], true
+			}
+		}
+		if ready {
+			trimmed := strings.TrimRight(search, " \n")
+			if strings.HasSuffix(trimmed, s.prompt) {
+				s.buf = s.buf[:0]
+				return strings.TrimSuffix(trimmed, s.prompt), nil
+			}
 		}
 		select {
 		case chunk, ok := <-s.chunks:

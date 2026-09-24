@@ -100,6 +100,22 @@ func TestDialRejectsInteractiveQuestion(t *testing.T) {
 	}
 }
 
+func TestDialRejectsInteractiveQuestionWithColon(t *testing.T) {
+	f := &fakeVRP{
+		password:  "secret",
+		loginText: "Warning: The password has expired. Change now? [Y/N]:",
+	}
+	startFakeVRP(t, f)
+	start := time.Now()
+	_, err := dialFake(t, f)
+	if elapsed := time.Since(start); elapsed >= 2*time.Second {
+		t.Fatalf("Dial took %v, want well under loginTimeout", elapsed)
+	}
+	if err == nil || !strings.Contains(err.Error(), "interactive question") {
+		t.Fatalf("error = %v, want interactive question error", err)
+	}
+}
+
 func TestDialRejectsUnknownHostKey(t *testing.T) {
 	f := &fakeVRP{password: "secret"}
 	startFakeVRP(t, f)
@@ -159,5 +175,84 @@ func TestRunTimeoutWithoutPromptClosesSession(t *testing.T) {
 	_, err = s.Run("ping hang", 200*time.Millisecond)
 	if !errors.Is(err, ErrTimeout) || !errors.Is(err, ErrClosed) {
 		t.Fatalf("error = %v, want ErrTimeout and ErrClosed", err)
+	}
+}
+
+// TestRunIgnoresStrayPrompt covers a race where the Ctrl-C reply to a hanging
+// command is followed by a second, stray prompt that lands after the next
+// Run has already started: without anchoring on the command's own echo, that
+// stray prompt would be mistaken for the end of the following command and
+// its real output would bleed into the command after that.
+func TestRunIgnoresStrayPrompt(t *testing.T) {
+	cmdA := BuildCommand(testJob)
+	jobB := testJob
+	jobB.IPv6 = true
+	cmdB := BuildCommand(jobB)
+
+	f := &fakeVRP{
+		password:           "secret",
+		hang:               map[string]bool{"ping hang": true},
+		extraPromptOnCtrlC: true,
+		responses:          map[string]string{cmdA: ipv4OK, cmdB: ipv6OK},
+	}
+	startFakeVRP(t, f)
+	s, err := dialFake(t, f)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer s.Close()
+
+	if _, err := s.Run("ping hang", 200*time.Millisecond); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("error = %v, want ErrTimeout", err)
+	}
+
+	outA, err := s.Run(cmdA, 2*time.Second)
+	if err != nil {
+		t.Fatalf("Run(cmdA): %v", err)
+	}
+	gotA, err := ParseOutput(outA)
+	if err != nil {
+		t.Fatalf("ParseOutput(cmdA output): %v", err)
+	}
+	if wantA, _ := ParseOutput(ipv4OK); !reflect.DeepEqual(gotA, wantA) {
+		t.Errorf("cmdA: got %+v, want %+v", gotA, wantA)
+	}
+
+	outB, err := s.Run(cmdB, 2*time.Second)
+	if err != nil {
+		t.Fatalf("Run(cmdB): %v", err)
+	}
+	gotB, err := ParseOutput(outB)
+	if err != nil {
+		t.Fatalf("ParseOutput(cmdB output): %v", err)
+	}
+	if wantB, _ := ParseOutput(ipv6OK); !reflect.DeepEqual(gotB, wantB) {
+		t.Errorf("cmdB: got %+v, want %+v", gotB, wantB)
+	}
+}
+
+// TestDialHonorsContext covers a router that accepts the SSH handshake but
+// never answers the shell channel request: without closing the underlying
+// connection on ctx cancellation, Dial would block forever.
+func TestDialHonorsContext(t *testing.T) {
+	f := &fakeVRP{password: "secret", stallShell: true}
+	startFakeVRP(t, f)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := Dial(ctx, SSHConfig{
+		Address:        f.addr,
+		Username:       "smokeping",
+		Password:       "secret",
+		KnownHostsFile: f.knownHosts(t),
+		DialTimeout:    2 * time.Second,
+	})
+	if elapsed := time.Since(start); elapsed >= 2*time.Second {
+		t.Fatalf("Dial took %v, want to return once ctx is done", elapsed)
+	}
+	if err == nil {
+		t.Fatal("expected an error when ctx is cancelled during login")
 	}
 }
