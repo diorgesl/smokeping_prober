@@ -174,9 +174,9 @@ type TargetGroup struct {
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface.
-func (s *Config) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (c *Config) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	type plain Config
-	return unmarshal((*plain)(s))
+	return unmarshal((*plain)(c))
 }
 
 // Validate checks routers and the target groups that reference them.

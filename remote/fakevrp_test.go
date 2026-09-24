@@ -160,8 +160,9 @@ func (f *fakeVRP) shell(ch ssh.Channel) {
 		if _, err := ch.Read(b); err != nil {
 			return
 		}
-		switch c := b[0]; {
-		case c == 0x03:
+		c := b[0]
+		switch c {
+		case 0x03:
 			if hanging && !f.ignoreCtrlC {
 				hanging = false
 				io.WriteString(ch, "\r\n"+fakePrompt)
@@ -172,7 +173,7 @@ func (f *fakeVRP) shell(ch ssh.Channel) {
 					}()
 				}
 			}
-		case c == '\r' || c == '\n':
+		case '\r', '\n':
 			if hanging {
 				continue
 			}
