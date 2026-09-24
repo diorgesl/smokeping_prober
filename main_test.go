@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -111,6 +112,7 @@ func TestStartRemoteOnly(t *testing.T) {
 		},
 	}
 	sp.start()
+	sp.startRemote()
 	if got := len(sp.remoteTargets()); got != 3 {
 		t.Errorf("remoteTargets = %d, want 3", got)
 	}
@@ -119,5 +121,46 @@ func TestStartRemoteOnly(t *testing.T) {
 	}
 	if sp.startedRemote != nil {
 		t.Error("stop left schedulers running")
+	}
+}
+
+// TestStartDoesNotStartRemoteSchedulers covers the startup/reload window
+// where the local splay loop can run for up to maxInterval before the
+// collector (and its Reset of the histogram/TTL vectors) exists: start()
+// must not start remote schedulers itself, or observations recorded during
+// that window would be wiped, reading as a false loss spike even though
+// Target.sent keeps counting. Only startRemote(), called after the collector
+// is registered, may start them.
+func TestStartDoesNotStartRemoteSchedulers(t *testing.T) {
+	hist := initMetrics(testLabelNames, prometheus.DefBuckets, 1.05)
+	targets := []*remote.Target{testRemoteTarget()}
+	targets[0].Interval = time.Minute
+	var dials atomic.Int32
+	dial := func(context.Context) (remote.Runner, error) {
+		dials.Add(1)
+		return nil, errors.New("unreachable")
+	}
+	sp := smokePingers{
+		preparedRemote: []*remote.Scheduler{
+			remote.NewScheduler("main-test-no-start", 1, dial, targets, newRemoteRecorder(testLabelNames, hist), logger),
+		},
+	}
+	sp.start()
+	time.Sleep(100 * time.Millisecond)
+	if got := dials.Load(); got != 0 {
+		t.Fatalf("dials after start() = %d, want 0 (start must not start remote schedulers)", got)
+	}
+
+	sp.startRemote()
+	deadline := time.Now().Add(2 * time.Second)
+	for dials.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := dials.Load(); got == 0 {
+		t.Error("dials after startRemote() = 0, want > 0")
+	}
+
+	if err := sp.stop(); err != nil {
+		t.Errorf("stop: %v", err)
 	}
 }

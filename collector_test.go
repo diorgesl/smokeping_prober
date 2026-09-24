@@ -16,10 +16,12 @@ package main
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	probing "github.com/prometheus-community/pro-bing"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	dto "github.com/prometheus/client_model/go"
@@ -48,6 +50,28 @@ func TestLabelValues(t *testing.T) {
 	}
 	if got := labelValues([]string{"ip", "missing"}, map[string]string{"ip": "a"}, nil); !reflect.DeepEqual(got, []string{"a", ""}) {
 		t.Errorf("missing label: got %q", got)
+	}
+}
+
+// TestLocalSeriesHaveEmptyLink covers the base label set for a local
+// (non-router) probe: it must carry the "link" label (so its series can be
+// unioned with remote ones) but always with an empty value.
+func TestLocalSeriesHaveEmptyLink(t *testing.T) {
+	pinger := probing.New("127.0.0.1")
+	if err := pinger.Resolve(); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	pr := probe{pinger: pinger, labels: map[string]string{}}
+	c := &SmokepingCollector{labelNames: testLabelNames}
+	vals := c.buildLabelValues(&pr, "")
+
+	linkIdx := slices.Index(testLabelNames, "link")
+	ipIdx := slices.Index(testLabelNames, "ip")
+	if vals[linkIdx] != "" {
+		t.Errorf("link = %q, want empty for a local probe", vals[linkIdx])
+	}
+	if vals[ipIdx] != "127.0.0.1" {
+		t.Errorf("ip = %q, want 127.0.0.1", vals[ipIdx])
 	}
 }
 

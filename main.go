@@ -127,9 +127,6 @@ func (s *smokePingers) start() {
 	}
 	s.startedRemote = s.preparedRemote
 	s.preparedRemote = nil
-	for _, sch := range s.startedRemote {
-		sch.Start()
-	}
 	s.g = new(errgroup.Group)
 	s.started = s.prepared
 	s.prepared = nil
@@ -156,6 +153,19 @@ func (s *smokePingers) start() {
 				return err
 			})
 		time.Sleep(splay)
+	}
+}
+
+// startRemote starts the remote schedulers prepared by the last call to
+// start(). Call it only after the collector that will record their results
+// has been registered: registering a new collector calls updateProbes,
+// which resets the histogram/TTL vectors, so starting the schedulers first
+// would let early observations land in a series that gets wiped right
+// after, reading as a startup or reload loss spike even though nothing was
+// actually lost.
+func (s *smokePingers) startRemote() {
+	for _, sch := range s.startedRemote {
+		sch.Start()
 	}
 }
 
@@ -373,6 +383,7 @@ func main() {
 	smokePingers.start()
 	smokepingCollector = NewSmokepingCollector(smokePingers.started, smokePingers.remoteTargets(), labelNames, *pingResponseSeconds)
 	prometheus.MustRegister(smokepingCollector)
+	smokePingers.startRemote()
 
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, syscall.SIGHUP)
@@ -423,6 +434,7 @@ func main() {
 			prometheus.Unregister(smokepingCollector)
 			smokepingCollector = NewSmokepingCollector(smokePingers.started, smokePingers.remoteTargets(), newLabelNames, *pingResponseSeconds)
 			prometheus.MustRegister(smokepingCollector)
+			smokePingers.startRemote()
 
 			logger.Info("Reloaded config file")
 			successCallback()
