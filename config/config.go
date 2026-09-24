@@ -268,6 +268,23 @@ func (c *Config) Validate() error {
 		if tg.Network == "ip4" && !slices.ContainsFunc(links, func(l Link) bool { return l.Source != "" }) {
 			return fmt.Errorf("targets[%d]: network is ip4 but router has no source", i)
 		}
+		if tg.Network == "ip" {
+			for _, host := range tg.Hosts {
+				ip := net.ParseIP(host)
+				if ip == nil {
+					// A hostname: the prober resolves it, and its family is
+					// unknown here.
+					continue
+				}
+				if ip.To4() == nil {
+					if !slices.ContainsFunc(links, func(l Link) bool { return l.Source6 != "" }) {
+						return fmt.Errorf("targets[%d]: host %q is IPv6 but no selected link of router %q has source6", i, host, r.Name)
+					}
+				} else if !slices.ContainsFunc(links, func(l Link) bool { return l.Source != "" }) {
+					return fmt.Errorf("targets[%d]: host %q is IPv4 but no selected link of router %q has source", i, host, r.Name)
+				}
+			}
+		}
 	}
 	return nil
 }

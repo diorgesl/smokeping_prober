@@ -64,6 +64,7 @@ func BuildTargets(tg config.TargetGroup, r config.Router, resolve func(host, net
 			return nil, fmt.Errorf("resolve %q: %w", host, err)
 		}
 		v6 := ip.To4() == nil
+		before := len(targets)
 		for _, l := range r.SelectLinks(tg.Links) {
 			src := l.Source
 			if v6 {
@@ -90,6 +91,9 @@ func BuildTargets(tg config.TargetGroup, r config.Router, resolve func(host, net
 					ToS:            tg.ToS,
 				},
 			})
+		}
+		if len(targets) == before {
+			return nil, fmt.Errorf("host %q: no link of router %q has a source address for its address family", host, r.Name)
 		}
 	}
 	return targets, nil

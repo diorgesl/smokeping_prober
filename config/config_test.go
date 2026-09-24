@@ -186,6 +186,11 @@ func TestValidationErrors(t *testing.T) {
 			want: "has no source6",
 		},
 		{
+			name: "network ip with an ipv6 host but no selected link has source6",
+			yaml: routerBlock + "targets:\n- host: 2001:4860:4860::8888\n  router: ne8k\n  links: [operadora-b]\n",
+			want: "is IPv6 but no selected link",
+		},
+		{
 			name: "invalid network",
 			yaml: routerBlock + "targets:\n- host: 8.8.8.8\n  router: ne8k\n  network: tcp\n",
 			want: "network must be one of ip, ip4, ip6",

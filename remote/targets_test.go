@@ -118,6 +118,21 @@ func TestResolveLiteralFamilyMismatch(t *testing.T) {
 	}
 }
 
+// TestBuildTargetsErrorsWhenNoLinkFitsFamily covers an IPv6 host whose
+// router has no link with a source6: every link is skipped and BuildTargets
+// must error instead of silently returning zero targets for that host.
+func TestBuildTargetsErrorsWhenNoLinkFitsFamily(t *testing.T) {
+	r := testRouter
+	r.Links = []config.Link{
+		{Name: "operadora-b", Source: "201.131.152.5"},
+		{Name: "operadora-c", Source: "201.131.152.9"},
+	}
+	_, err := BuildTargets(remoteGroup("2001:4860:4860::8888", "ip6"), r, Resolve, nopLogger)
+	if err == nil {
+		t.Fatal("expected an error when no link has a source address for the host's family")
+	}
+}
+
 func TestNewSSHDialerReadsPasswordFile(t *testing.T) {
 	r := testRouter
 	r.PasswordFile = filepath.Join(t.TempDir(), "missing.pass")
