@@ -99,6 +99,10 @@ Notes:
 * Create `known_hosts` with `ssh-keyscan -p 22 10.0.0.1 > known_hosts` and check the fingerprint on the router.
 * The SSH user only needs to run `ping` and `screen-length 0 temporary` in user view.
 * A failed SSH session, timeout or unexpected output never counts as packet loss. It shows up in `smokeping_remote_errors_total` instead.
+* `sessions` holds that many VTY lines on the router; keep it below the router's VTY limit (`user-interface maximum-vty`) so operators can still log in.
+* The prober keeps its sessions busy, but if the VTY `idle-timeout` is short and targets are few, sessions may be dropped and reconnected; this shows in `smokeping_remote_errors_total{reason="connect"}`.
+* Every ping is a CLI command: with HWTACACS command accounting or command logging enabled, expect one record per run.
+* Encrypted (passphrase-protected) private keys are not supported.
 
 ## Building and running
 
