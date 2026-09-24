@@ -189,6 +189,14 @@ func (s *Scheduler) worker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case t := <-s.queue:
+			if ctx.Err() != nil {
+				// Stop was called between the timer firing and this job
+				// being dequeued: drop it instead of draining the rest of
+				// the backlog one command at a time. The deferred session
+				// close below still runs.
+				t.pending.Store(false)
+				return
+			}
 			if !s.runJob(r, t) {
 				r.Close()
 				r = nil

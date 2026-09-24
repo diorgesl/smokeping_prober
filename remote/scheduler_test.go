@@ -216,3 +216,47 @@ func TestSchedulerStopWaitsForRunningJob(t *testing.T) {
 		t.Error("Stop did not close the session")
 	}
 }
+
+// TestSchedulerNoJobsAfterStop covers a worker that pulls a job off the queue
+// right as Stop cancels the context: without checking ctx.Err() before
+// running it, the worker keeps draining whatever backlog is still queued
+// instead of exiting immediately. sync.WaitGroup already keeps any such job
+// from starting after Stop() itself has returned (Stop blocks on Wait), so
+// the discriminating symptom is Stop() taking as long as the backlog takes
+// to drain rather than returning promptly; the elapsed-time assertion below
+// catches that, and the run-count check guards the literal "no jobs after
+// Stop returned" requirement too.
+func TestSchedulerNoJobsAfterStop(t *testing.T) {
+	var runs atomic.Int32
+	dial := func(context.Context) (Runner, error) {
+		return &fakeRunner{run: func(string) (string, error) {
+			runs.Add(1)
+			time.Sleep(50 * time.Millisecond)
+			return ipv4OK, nil
+		}}, nil
+	}
+	targets := testTargets(10*time.Millisecond, "a", "b", "c", "d", "e")
+	s := NewScheduler("sched-nojobs-after-stop", 1, dial, targets, &fakeRecorder{}, nopLogger)
+	s.Start()
+	waitFor(t, "at least one run", func() bool { return runs.Load() >= 1 })
+	// Let every target's staggered offset (0, 2, 4, 6, 8ms) fire, so a
+	// backlog of queued-but-not-yet-run jobs exists when Stop is called.
+	time.Sleep(15 * time.Millisecond)
+
+	stopStart := time.Now()
+	s.Stop()
+	stopElapsed := time.Since(stopStart)
+	// Without skipping backlog jobs once cancelled, Stop must drain the
+	// remaining ~4 queued jobs one at a time (50ms each, ~200ms total)
+	// before it can return. Skipping them bounds Stop to roughly the time
+	// left on the job already in flight.
+	if stopElapsed > 150*time.Millisecond {
+		t.Errorf("Stop took %v, want well under 150ms (backlog jobs must be skipped, not run)", stopElapsed)
+	}
+
+	after := runs.Load()
+	time.Sleep(200 * time.Millisecond)
+	if runs.Load() != after {
+		t.Errorf("runs after Stop returned: %d -> %d, want no new runs", after, runs.Load())
+	}
+}
