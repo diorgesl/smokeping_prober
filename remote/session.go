@@ -88,9 +88,12 @@ func Dial(ctx context.Context, cfg SSHConfig) (*Session, error) {
 	}
 	// ctx only bounds Dial itself: closing conn unblocks a handshake or a
 	// stalled channel/pty/shell request that ssh's blocking calls cannot
-	// otherwise cancel. stop is called once Dial has a working Session, so
-	// a later cancellation of ctx does not affect the session's lifetime.
+	// otherwise cancel. stop is deferred so it disarms on every return path
+	// (including a failed dial or handshake), and once Dial returns a
+	// working Session, a later cancellation of ctx no longer affects that
+	// session's lifetime.
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
 	_ = conn.SetDeadline(time.Now().Add(timeout + loginTimeout))
 	c, chans, reqs, err := ssh.NewClientConn(conn, cfg.Address, &ssh.ClientConfig{
 		User:            cfg.Username,
@@ -109,7 +112,6 @@ func Dial(ctx context.Context, cfg SSHConfig) (*Session, error) {
 		return nil, err
 	}
 	_ = conn.SetDeadline(time.Time{})
-	stop()
 	return s, nil
 }
 
