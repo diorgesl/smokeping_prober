@@ -63,6 +63,43 @@ The interval Duration is in [Go time.ParseDuration()](https://golang.org/pkg/tim
 
 The config is read on startup, and can be reloaded with the SIGHUP signal, or with an HTTP POST to the URI path `/-/reload`.
 
+### Remote ping through a Huawei VRP router
+
+A target group with `router:` is pinged by the router instead of the local host. The prober keeps persistent SSH sessions to the router and runs `ping -a <link source> <target>` once per link, so a router with several uplinks produces one series per uplink, told apart by the `link` label.
+
+```yaml
+routers:
+- name: ne8k
+  address: 10.0.0.1:22
+  username: smokeping
+  password_file: /etc/smokeping_prober/ne8k.pass  # or private_key_file
+  known_hosts: /etc/smokeping_prober/known_hosts  # or insecure_skip_host_key: true (lab only)
+  sessions: 5                                     # Default 5
+  links:
+  - name: isp-a
+    source: 192.0.2.1
+    source6: 2001:db8::1   # Optional, needed for IPv6 targets
+  - name: isp-b
+    source: 198.51.100.1
+
+targets:
+- host: 8.8.8.8
+  router: ne8k
+  interval: 1m          # Default 1m for router targets
+  count: 10             # Echo requests per run (-c). Default 10
+  packet_interval: 50ms # Time between requests (-m). Default 50ms
+  timeout: 500ms        # Wait per reply (-t). Default 500ms
+  # links: [isp-a]      # Optional subset of the router links
+```
+
+Notes:
+
+* The router reports round-trip times in whole milliseconds, so remote histograms have 1 ms resolution.
+* `protocol` is ignored and `source` cannot be set for router targets; the source comes from each link.
+* Create `known_hosts` with `ssh-keyscan -p 22 10.0.0.1 > known_hosts` and check the fingerprint on the router.
+* The SSH user only needs to run `ping` and `screen-length 0 temporary` in user view.
+* A failed SSH session, timeout or unexpected output never counts as packet loss. It shows up in `smokeping_remote_errors_total` instead.
+
 ## Building and running
 
 Requires Go >= 1.22
@@ -102,6 +139,9 @@ docker run \
  smokeping\_response\_duplicates\_total | Counter    | The number of duplicated response packets.
  smokeping\_receive\_errors\_total      | Counter    | The number of errors when Pinger attempts to receive packets.
  smokeping\_send\_errors\_total         | Counter    | The number of errors when Pinger attempts to send packets.
+ smokeping\_remote\_sessions\_up         | Gauge      | SSH sessions connected and ready per router.
+ smokeping\_remote\_errors\_total        | Counter    | Remote ping runs with no result, by `reason` (`connect`, `timeout`, `parse`).
+ smokeping\_remote\_jobs\_skipped\_total | Counter    | Remote runs dropped because the previous run for the same target and link was still pending.
 
 ### TLS and basic authentication
 

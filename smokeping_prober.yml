@@ -8,3 +8,17 @@ targets:
   size: 56 # Packet data size in bytes. Default 56 (Range: 24 - 65535)
   source: 127.0.1.1 # Souce IP address to use. Default: None (automatic selection)
   tos: 0x00 # Packet ToS field in decimal, hexadecimal or binary format. Default: 0 (Range: 0-255)
+
+# Ping through a Huawei VRP router, once per uplink. See README.md.
+# routers:
+# - name: ne8k
+#   address: 10.0.0.1:22
+#   username: smokeping
+#   password_file: /etc/smokeping_prober/ne8k.pass
+#   known_hosts: /etc/smokeping_prober/known_hosts
+#   links:
+#   - name: isp-a
+#     source: 192.0.2.1
+# targets:
+# - host: 8.8.8.8
+#   router: ne8k

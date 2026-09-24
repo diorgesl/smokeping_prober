@@ -1,7 +1,7 @@
 ## master / unreleased
 
 * [CHANGE]
-* [FEATURE]
+* [FEATURE] Ping through Huawei VRP routers over SSH, one series per uplink (`link` label)
 * [ENHANCEMENT]
 * [BUGFIX]
 
