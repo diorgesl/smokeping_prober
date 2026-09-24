@@ -5,3 +5,4 @@ smokeping_prober
 /.tarballs
 /vendor
 /graphify-out
+/.claude/
