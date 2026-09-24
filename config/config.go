@@ -157,20 +157,20 @@ func (sc *SafeConfig) ReloadConfig(confFile string) (err error) {
 // TargetGroup supports both the original list of hosts and the new single host format.
 // If `host` is set, it is folded into `hosts`.
 type TargetGroup struct {
-	Hosts    []string          `yaml:"hosts"`
-	Host     string            `yaml:"host,omitempty"`
-	Interval time.Duration     `yaml:"interval,omitempty"`
-	Network  string            `yaml:"network,omitempty"`
-	Protocol string            `yaml:"protocol,omitempty"`
-	Size     int               `yaml:"size,omitempty"`
-	Source   string            `yaml:"source,omitempty"`
-	ToS      uint8             `yaml:"tos,omitempty"`
-	Labels   map[string]string `yaml:"labels,omitempty"`
-	Router   string            `yaml:"router,omitempty"`
-	Links    []string          `yaml:"links,omitempty"`
-	Count    int               `yaml:"count,omitempty"`
-	PacketInterval time.Duration `yaml:"packet_interval,omitempty"`
-	Timeout  time.Duration     `yaml:"timeout,omitempty"`
+	Hosts          []string          `yaml:"hosts"`
+	Host           string            `yaml:"host,omitempty"`
+	Interval       time.Duration     `yaml:"interval,omitempty"`
+	Network        string            `yaml:"network,omitempty"`
+	Protocol       string            `yaml:"protocol,omitempty"`
+	Size           int               `yaml:"size,omitempty"`
+	Source         string            `yaml:"source,omitempty"`
+	ToS            uint8             `yaml:"tos,omitempty"`
+	Labels         map[string]string `yaml:"labels,omitempty"`
+	Router         string            `yaml:"router,omitempty"`
+	Links          []string          `yaml:"links,omitempty"`
+	Count          int               `yaml:"count,omitempty"`
+	PacketInterval time.Duration     `yaml:"packet_interval,omitempty"`
+	Timeout        time.Duration     `yaml:"timeout,omitempty"`
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface.
