@@ -230,6 +230,11 @@ func TestValidationErrors(t *testing.T) {
 			yaml: "routers:\n- {name: a, address: x:22, username: u, password_file: p, known_hosts: k}\ntargets: []\n",
 			want: "at least one link is required",
 		},
+		{
+			name: "zero interval",
+			yaml: routerBlock + "targets:\n- host: 8.8.8.8\n  router: ne8k\n  interval: 0s\n",
+			want: "interval must be positive",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

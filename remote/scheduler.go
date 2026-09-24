@@ -38,6 +38,7 @@ type Recorder interface {
 }
 
 // Target is one (host, link) pair pinged through a router.
+// A Target belongs to one Scheduler and must not be reused after Stop.
 type Target struct {
 	Host     string
 	Link     string
@@ -94,7 +95,7 @@ func (s *Scheduler) Targets() []*Target { return s.targets }
 func (s *Scheduler) Start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
-	sessionsUp.WithLabelValues(s.router).Set(0)
+	sessionsUp.WithLabelValues(s.router)
 	for _, reason := range []string{reasonConnect, reasonTimeout, reasonParse} {
 		remoteErrors.WithLabelValues(s.router, reason)
 	}

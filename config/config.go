@@ -253,6 +253,9 @@ func (c *Config) Validate() error {
 		if tg.Count < 1 {
 			return fmt.Errorf("targets[%d]: count must be at least 1", i)
 		}
+		if tg.Interval <= 0 {
+			return fmt.Errorf("targets[%d]: interval must be positive", i)
+		}
 		for _, name := range tg.Links {
 			if !slices.ContainsFunc(r.Links, func(l Link) bool { return l.Name == name }) {
 				return fmt.Errorf("targets[%d]: router %q has no link %q", i, r.Name, name)
