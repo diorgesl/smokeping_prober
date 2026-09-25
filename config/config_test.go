@@ -236,6 +236,11 @@ func TestValidationErrors(t *testing.T) {
 			want: "at least one link is required",
 		},
 		{
+			name: "vpn instance with spaces",
+			yaml: "routers:\n- {name: a, address: x:22, username: u, password_file: p, known_hosts: k, links: [{name: l, source: 1.1.1.1, vpn_instance: 'up 1; reboot'}]}\ntargets: []\n",
+			want: `vpn_instance "up 1; reboot" may only contain`,
+		},
+		{
 			name: "zero interval",
 			yaml: routerBlock + "targets:\n- host: 8.8.8.8\n  router: ne8k\n  interval: 0s\n",
 			want: "interval must be positive",

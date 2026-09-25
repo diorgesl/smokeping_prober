@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
 	"slices"
 	"sync"
 	"time"
@@ -80,10 +81,15 @@ type Router struct {
 
 // Link is one uplink of a router, identified by the source address used to ping through it.
 type Link struct {
-	Name    string `yaml:"name"`
-	Source  string `yaml:"source,omitempty"`
-	Source6 string `yaml:"source6,omitempty"`
+	Name        string `yaml:"name"`
+	VPNInstance string `yaml:"vpn_instance,omitempty"`
+	Source      string `yaml:"source,omitempty"`
+	Source6     string `yaml:"source6,omitempty"`
 }
+
+// vpnInstanceRe limits VPN instance names to characters that are safe to put
+// on the router command line.
+var vpnInstanceRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 type SafeConfig struct {
 	sync.RWMutex
@@ -218,6 +224,9 @@ func (c *Config) Validate() error {
 			seen[l.Name] = true
 			if l.Source == "" && l.Source6 == "" {
 				return fmt.Errorf("router %q: link %q: source or source6 is required", r.Name, l.Name)
+			}
+			if l.VPNInstance != "" && !vpnInstanceRe.MatchString(l.VPNInstance) {
+				return fmt.Errorf("router %q: link %q: vpn_instance %q may only contain letters, digits, '-', '_' and '.'", r.Name, l.Name, l.VPNInstance)
 			}
 			if l.Source != "" {
 				if ip := net.ParseIP(l.Source); ip == nil || ip.To4() == nil {

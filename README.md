@@ -77,6 +77,7 @@ routers:
   sessions: 5                                     # Default 5
   links:
   - name: isp-a
+    vpn_instance: upstream-1 # Optional, pings inside this VPN instance
     source: 192.0.2.1
     source6: 2001:db8::1   # Optional, needed for IPv6 targets
   - name: isp-b

@@ -34,6 +34,7 @@ type Job struct {
 	Timeout        time.Duration
 	Size           int
 	ToS            uint8
+	VPNInstance    string
 }
 
 // Reply is one echo reply reported by the router.
@@ -63,13 +64,22 @@ var (
 
 // BuildCommand returns the VRP ping command for j.
 func BuildCommand(j Job) string {
-	family, tosFlag := "ping", "-tos"
+	// IPv4 takes the VPN instance as the -vpn-instance option; IPv6 takes the
+	// vpn-instance keyword right before the destination.
+	family, tosFlag, vpn4, vpn6 := "ping", "-tos", "", ""
 	if j.IPv6 {
 		family, tosFlag = "ping ipv6", "-tc"
 	}
-	return fmt.Sprintf("%s -c %d -m %d -t %d -s %d %s %d -a %s %s",
-		family, j.Count, j.PacketInterval.Milliseconds(), j.Timeout.Milliseconds(),
-		j.Size, tosFlag, j.ToS, j.Source, j.Target)
+	if j.VPNInstance != "" {
+		if j.IPv6 {
+			vpn6 = "vpn-instance " + j.VPNInstance + " "
+		} else {
+			vpn4 = "-vpn-instance " + j.VPNInstance + " "
+		}
+	}
+	return fmt.Sprintf("%s %s-c %d -m %d -t %d -s %d %s %d -a %s %s%s",
+		family, vpn4, j.Count, j.PacketInterval.Milliseconds(), j.Timeout.Milliseconds(),
+		j.Size, tosFlag, j.ToS, j.Source, vpn6, j.Target)
 }
 
 // CommandDeadline is how long a run of j may take before it is cancelled.

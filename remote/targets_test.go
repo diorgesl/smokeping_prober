@@ -65,6 +65,20 @@ func TestBuildTargetsOnePerLink(t *testing.T) {
 	}
 }
 
+func TestBuildTargetsCopiesVPNInstance(t *testing.T) {
+	r := testRouter
+	r.Links = []config.Link{{Name: "viams", VPNInstance: "upstream-1", Source: "45.174.220.14", Source6: "2804:5bc8:f000::4"}}
+	for _, host := range []string{"8.8.8.8", "2001:4860:4860::8888"} {
+		targets, err := BuildTargets(remoteGroup(host, "ip"), r, Resolve, nopLogger)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(targets) != 1 || targets[0].Job.VPNInstance != "upstream-1" {
+			t.Errorf("%s: targets = %+v, want one job with VPN instance upstream-1", host, targets)
+		}
+	}
+}
+
 func TestBuildTargetsIPv6SkipsLinksWithoutSource6(t *testing.T) {
 	targets, err := BuildTargets(remoteGroup("2001:4860:4860::8888", "ip6"), testRouter, Resolve, nopLogger)
 	if err != nil {

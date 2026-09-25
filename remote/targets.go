@@ -89,6 +89,7 @@ func BuildTargets(tg config.TargetGroup, r config.Router, resolve func(host, net
 					Timeout:        tg.Timeout,
 					Size:           tg.Size,
 					ToS:            tg.ToS,
+					VPNInstance:    l.VPNInstance,
 				},
 			})
 		}

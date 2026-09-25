@@ -164,6 +164,23 @@ func TestBuildCommand(t *testing.T) {
 	}
 }
 
+func TestBuildCommandVPNInstance(t *testing.T) {
+	base := Job{Count: 10, PacketInterval: ms(50), Timeout: ms(500), Size: 56, VPNInstance: "upstream-1"}
+
+	v4 := base
+	v4.Target, v4.Source = "8.8.8.8", "45.174.220.14"
+	if got, want := BuildCommand(v4), "ping -vpn-instance upstream-1 -c 10 -m 50 -t 500 -s 56 -tos 0 -a 45.174.220.14 8.8.8.8"; got != want {
+		t.Errorf("ipv4: got %q, want %q", got, want)
+	}
+
+	// VRP takes the IPv6 VPN instance as a keyword right before the destination.
+	v6 := base
+	v6.Target, v6.Source, v6.IPv6 = "2001:4860:4860::8888", "2804:5bc8:f000::4", true
+	if got, want := BuildCommand(v6), "ping ipv6 -c 10 -m 50 -t 500 -s 56 -tc 0 -a 2804:5bc8:f000::4 vpn-instance upstream-1 2001:4860:4860::8888"; got != want {
+		t.Errorf("ipv6: got %q, want %q", got, want)
+	}
+}
+
 func TestCommandDeadline(t *testing.T) {
 	j := Job{Count: 10, PacketInterval: ms(50), Timeout: ms(500)}
 	if got, want := CommandDeadline(j), 10500*time.Millisecond; got != want {
