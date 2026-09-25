@@ -90,13 +90,15 @@ targets:
   count: 10             # Echo requests per run (-c). Default 10
   packet_interval: 50ms # Time between requests (-m). Default 50ms
   timeout: 500ms        # Wait per reply (-t). Default 500ms
+  local_interval: 1s    # Interval of the local ping of the same host. Default 1s
   # links: [isp-a]      # Optional subset of the router links
 ```
 
 Notes:
 
+* Router targets are always pinged from the prober host too, at `local_interval`, so each host has one series per link plus one with `link=""` to compare against. The local ping uses the group's `size`, `tos`, `network` and `protocol`, and needs the same privileges as any local ping.
 * The router reports round-trip times in whole milliseconds, so remote histograms have 1 ms resolution.
-* `protocol` is ignored and `source` cannot be set for router targets; the source comes from each link.
+* The router always pings with ICMP, and `source` cannot be set for router targets; the source comes from each link.
 * Create `known_hosts` with `ssh-keyscan -p 22 10.0.0.1 > known_hosts` and check the fingerprint on the router.
 * The SSH user only needs to run `ping` and `screen-length 0 temporary` in user view.
 * A failed SSH session, timeout or unexpected output never counts as packet loss. It shows up in `smokeping_remote_errors_total` instead.

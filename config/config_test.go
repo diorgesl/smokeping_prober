@@ -124,6 +124,9 @@ targets:
 	if tg.Count != DefaultRemoteCount || tg.PacketInterval != DefaultRemotePacketInterval || tg.Timeout != DefaultRemoteTimeout {
 		t.Errorf("remote defaults not applied: %+v", tg)
 	}
+	if tg.LocalInterval != DefaultTargetGroup.Interval {
+		t.Errorf("local_interval = %v, want %v", tg.LocalInterval, DefaultTargetGroup.Interval)
+	}
 }
 
 func TestRemoteGroupExplicitValues(t *testing.T) {
@@ -135,13 +138,14 @@ targets:
     count: 5
     packet_interval: 100ms
     timeout: 1s
+    local_interval: 5s
     links: [operadora-c, operadora-a]
 `)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	tg := sc.C.Targets[0]
-	if tg.Interval != 30*time.Second || tg.Count != 5 || tg.PacketInterval != 100*time.Millisecond || tg.Timeout != time.Second {
+	if tg.Interval != 30*time.Second || tg.Count != 5 || tg.PacketInterval != 100*time.Millisecond || tg.Timeout != time.Second || tg.LocalInterval != 5*time.Second {
 		t.Errorf("explicit values not kept: %+v", tg)
 	}
 	r, _ := sc.C.Router("ne8k")
@@ -179,6 +183,16 @@ func TestValidationErrors(t *testing.T) {
 			name: "remote fields in local group",
 			yaml: "targets:\n- host: 8.8.8.8\n  count: 5\n",
 			want: "require router",
+		},
+		{
+			name: "local_interval in local group",
+			yaml: "targets:\n- host: 8.8.8.8\n  local_interval: 1s\n",
+			want: "require router",
+		},
+		{
+			name: "negative local_interval",
+			yaml: routerBlock + "targets:\n- host: 8.8.8.8\n  router: ne8k\n  local_interval: -1s\n",
+			want: "local_interval must be positive",
 		},
 		{
 			name: "ip6 without any source6",

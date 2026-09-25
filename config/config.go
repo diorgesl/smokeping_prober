@@ -177,6 +177,7 @@ type TargetGroup struct {
 	Count          int               `yaml:"count,omitempty"`
 	PacketInterval time.Duration     `yaml:"packet_interval,omitempty"`
 	Timeout        time.Duration     `yaml:"timeout,omitempty"`
+	LocalInterval  time.Duration     `yaml:"local_interval,omitempty"`
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface.
@@ -244,8 +245,8 @@ func (c *Config) Validate() error {
 
 	for i, tg := range c.Targets {
 		if tg.Router == "" {
-			if tg.Count != 0 || tg.PacketInterval != 0 || tg.Timeout != 0 || len(tg.Links) != 0 {
-				return fmt.Errorf("targets[%d]: count, packet_interval, timeout and links require router", i)
+			if tg.Count != 0 || tg.PacketInterval != 0 || tg.Timeout != 0 || tg.LocalInterval != 0 || len(tg.Links) != 0 {
+				return fmt.Errorf("targets[%d]: count, packet_interval, timeout, local_interval and links require router", i)
 			}
 			continue
 		}
@@ -264,6 +265,9 @@ func (c *Config) Validate() error {
 		}
 		if tg.Interval <= 0 {
 			return fmt.Errorf("targets[%d]: interval must be positive", i)
+		}
+		if tg.LocalInterval <= 0 {
+			return fmt.Errorf("targets[%d]: local_interval must be positive", i)
 		}
 		for _, name := range tg.Links {
 			if !slices.ContainsFunc(r.Links, func(l Link) bool { return l.Name == name }) {
@@ -329,6 +333,10 @@ func (s *TargetGroup) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 	if s.Timeout == 0 {
 		s.Timeout = DefaultRemoteTimeout
+	}
+	// Router groups are always pinged locally too, by default at the local default interval.
+	if s.LocalInterval == 0 {
+		s.LocalInterval = DefaultTargetGroup.Interval
 	}
 	return nil
 }

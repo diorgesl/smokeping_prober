@@ -74,7 +74,7 @@ func TestPrepareSplitsLocalAndRemote(t *testing.T) {
 	withConfig(t, &config.Config{
 		Routers: []config.Router{testRouterConfig(t)},
 		Targets: []config.TargetGroup{
-			{Hosts: []string{"8.8.8.8"}, Router: "ne8k", Network: "ip4", Interval: time.Minute, Count: 10, PacketInterval: 50 * time.Millisecond, Timeout: 500 * time.Millisecond, Size: 56},
+			{Hosts: []string{"8.8.8.8"}, Router: "ne8k", Network: "ip4", Protocol: "icmp", Interval: time.Minute, LocalInterval: 2 * time.Second, Count: 10, PacketInterval: 50 * time.Millisecond, Timeout: 500 * time.Millisecond, Size: 56, Labels: map[string]string{"smokeping_name": "Google-1-v4"}},
 			{Hosts: []string{"127.0.0.1"}, Network: "ip", Protocol: "icmp", Interval: time.Second, Size: 56},
 		},
 	})
@@ -85,17 +85,22 @@ func TestPrepareSplitsLocalAndRemote(t *testing.T) {
 	if err := sp.prepare(&hosts, &interval, &privileged, &size, &tos, newRemoteRecorder(testLabelNames, hist)); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
-	if len(sp.prepared) != 1 {
-		t.Errorf("local probes = %d, want 1", len(sp.prepared))
+	// The router group is also pinged locally, at local_interval, with the group's labels.
+	if len(sp.prepared) != 2 {
+		t.Fatalf("local probes = %d, want 2", len(sp.prepared))
+	}
+	routed := sp.prepared[0]
+	if routed.pinger.Addr() != "8.8.8.8" || routed.pinger.Interval != 2*time.Second || routed.labels["smokeping_name"] != "Google-1-v4" {
+		t.Errorf("local probe of the router group = addr %s interval %v labels %v", routed.pinger.Addr(), routed.pinger.Interval, routed.labels)
 	}
 	if len(sp.preparedRemote) != 1 || len(sp.preparedRemote[0].Targets()) != 3 {
 		t.Fatalf("remote schedulers = %+v, want 1 with 3 targets", sp.preparedRemote)
 	}
-	if sp.sizeOfPrepared() != 4 {
-		t.Errorf("sizeOfPrepared = %d, want 4", sp.sizeOfPrepared())
+	if sp.sizeOfPrepared() != 5 {
+		t.Errorf("sizeOfPrepared = %d, want 5", sp.sizeOfPrepared())
 	}
-	if sp.maxInterval != time.Second {
-		t.Errorf("maxInterval = %v, want 1s (remote intervals must not stretch the local splay)", sp.maxInterval)
+	if sp.maxInterval != 2*time.Second {
+		t.Errorf("maxInterval = %v, want 2s (local_interval counts, the remote interval does not)", sp.maxInterval)
 	}
 }
 

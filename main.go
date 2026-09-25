@@ -225,6 +225,7 @@ func (s *smokePingers) prepare(hosts *[]string, interval *time.Duration, privile
 		if packetSize < 24 || packetSize > 65535 {
 			return fmt.Errorf("packet size must be in the range 24-65535, but found '%d' bytes", packetSize)
 		}
+		localInterval := targetGroup.Interval
 		if targetGroup.Router != "" {
 			router, _ := sc.C.Router(targetGroup.Router)
 			targets, err := remote.BuildTargets(targetGroup, router, remote.Resolve, logger)
@@ -232,14 +233,17 @@ func (s *smokePingers) prepare(hosts *[]string, interval *time.Duration, privile
 				return fmt.Errorf("router %q: %w", router.Name, err)
 			}
 			remoteTargets[router.Name] = append(remoteTargets[router.Name], targets...)
-			continue
+			// Router groups are also pinged from this host, for comparison
+			// with each uplink. Their interval is the remote one, so the
+			// local pinger uses local_interval instead.
+			localInterval = targetGroup.LocalInterval
 		}
-		if targetGroup.Interval > maxInterval {
-			maxInterval = targetGroup.Interval
+		if localInterval > maxInterval {
+			maxInterval = localInterval
 		}
 		for _, host = range targetGroup.Hosts {
 			pinger = probing.New(host)
-			pinger.Interval = targetGroup.Interval
+			pinger.Interval = localInterval
 			pinger.RecordRtts = false
 			pinger.RecordTTLs = false
 			pinger.SetNetwork(targetGroup.Network)
